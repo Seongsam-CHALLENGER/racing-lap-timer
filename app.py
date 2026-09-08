@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import io
+import time
 
 # 페이지 설정
 st.set_page_config(
@@ -10,20 +10,29 @@ st.set_page_config(
     layout="wide"
 )
 
-# 세션 상태 초기화 (데이터 및 로그인 상태 유지)
+# 세션 상태 초기화
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
 if "lap_data" not in st.session_state:
     st.session_state["lap_data"] = pd.DataFrame(columns=["세션명", "랩 번호", "랩타임(초)"])
 
-# 비밀번호 인증 화면 (st.secrets 사용)
+# 스탑워치용 세션 상태 초기화
+if "is_running" not in st.session_state:
+    st.session_state["is_running"] = False
+if "start_time" not in st.session_state:
+    st.session_state["start_time"] = 0.0
+if "elapsed_time" not in st.session_state:
+    st.session_state["elapsed_time"] = 0.0
+if "last_lap_time" not in st.session_state:
+    st.session_state["last_lap_time"] = 0.0
+
+# 비밀번호 인증 함수
 def check_password():
     def password_entered():
-        # st.secrets에 설정된 비밀번호와 비교
         if st.session_state["password"] == st.secrets["password"]:
             st.session_state["logged_in"] = True
-            del st.session_state["password"]  # 비밀번호 상태 제거
+            del st.session_state["password"]
         else:
             st.session_state["logged_in"] = False
 
@@ -38,62 +47,97 @@ def check_password():
         return False
     return True
 
-# 인증 통과 시에만 앱 실행
 if check_password():
-    st.title("🏎️ 레이싱 랩타임 기록 및 분석 시스템")
-    st.markdown("팀원들과 실시간으로 랩타임 기록을 공유하고 분석하세요!")
+    st.title("🏎️ 레이싱 랩타임 스탑워치 시스템")
+    st.markdown("스탑워치 버튼을 활용해 실시간으로 랩타임을 측정하세요!")
 
-    # 사이드바 - 데이터 입력 설정
-    st.sidebar.header("⚙️ 데이터 입력 설정")
-    session_name = st.sidebar.text_input("이벤트/세션 명", value="예선전_1차")
+    # 사이드바 - 세션 설정 및 컨트롤
+    st.sidebar.header("⚙️ 측정 제어판")
+    session_name = st.sidebar.text_input("이벤트/세션 명", value="결승전_1차")
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("랩타임 입력 (예: 123 또는 45.67)")
 
-    # 엔터키 입력 지원을 위한 form 활용
-    with st.sidebar.form(key="lap_form", clear_on_submit=True):
-        lap_input = st.text_input("랩타임(초)")
-        submit_button = st.form_submit_button(label="기록 추가하기 (Enter 가능)")
+    # 스탑워치 로직 계산
+    current_time = time.time()
+    if st.session_state["is_running"]:
+        total_elapsed = st.session_state["elapsed_time"] + (current_time - st.session_state["start_time"])
+        current_lap_elapsed = total_elapsed - st.session_state["last_lap_time"]
+    else:
+        total_elapsed = st.session_state["elapsed_time"]
+        if st.session_state["start_time"] == 0:
+            current_lap_elapsed = 0.0
+        else:
+            current_lap_elapsed = total_elapsed - st.session_state["last_lap_time"]
 
-        if submit_button and lap_input:
-            try:
-                lap_time_val = float(lap_input)
-                
-                # 현재 세션의 기존 랩 개수 확인하여 다음 랩 번호 부여
+    # 화면에 타이머 실시간 표시용 박스
+    st.sidebar.subheader("⏱️ 실시간 타이머")
+    st.sidebar.metric("총 경과 시간", f"{total_elapsed:.2f} 초")
+    st.sidebar.metric("현재 랩 진행 시간", f"{current_lap_elapsed:.2f} 초", delta_color="off")
+
+    st.sidebar.markdown("---")
+
+    # 스탑워치 시작 / 정지 버튼
+    col_s1, col_s2 = st.sidebar.columns(2)
+    with col_s1:
+        if not st.session_state["is_running"]:
+            if st.button("▶️ 측정 시작", use_container_width=True):
+                st.session_state["is_running"] = True
+                st.session_state["start_time"] = time.time()
+                st.rerun()
+        else:
+            if st.button("⏸️ 일시정지", use_container_width=True):
+                st.session_state["elapsed_time"] += time.time() - st.session_state["start_time"]
+                st.session_state["is_running"] = False
+                st.rerun()
+
+    with col_s2:
+        if st.button("⏹️ 초기화", use_container_width=True):
+            st.session_state["is_running"] = False
+            st.session_state["start_time"] = 0.0
+            st.session_state["elapsed_time"] = 0.0
+            st.session_state["last_lap_time"] = 0.0
+            st.rerun()
+
+    # 랩 기록 버튼 (달리는 중에만 활성화 혹은 누를 때마다 현재 랩타임 저장)
+    if st.button("🏁 랩(Lap) 기록하기", use_container_width=True, type="primary"):
+        if st.session_state["is_running"] or total_elapsed > 0:
+            # 이번 랩에 소요된 시간 계산
+            lap_duration = current_lap_elapsed
+            
+            if lap_duration > 0.5: # 너무 짧은 오작동 클릭 방지
                 current_session_df = st.session_state["lap_data"][
                     st.session_state["lap_data"]["세션명"] == session_name
                 ]
                 next_lap_no = len(current_session_df) + 1
 
-                # 새로운 데이터 추가
                 new_row = pd.DataFrame({
                     "세션명": [session_name],
                     "랩 번호": [next_lap_no],
-                    "랩타임(초)": [lap_time_val]
+                    "랩타임(초)": [round(lap_duration, 2)]
                 })
                 
                 st.session_state["lap_data"] = pd.concat(
                     [st.session_state["lap_data"], new_row], 
                     ignore_index=True
                 )
-                st.sidebar.success(f"{next_lap_no}랩 기록 ({lap_time_val}초) 추가 완료!")
-            except ValueError:
-                st.sidebar.error("⚠️ 올바른 숫자를 입력해주세요 (예: 78.5)")
+                
+                # 마지막 랩 기준점 갱신 (다음 랩은 0초부터 다시 측정)
+                st.session_state["last_lap_time"] = total_elapsed
+                st.success(f"{next_lap_no}랩 기록 ({lap_duration:.2f}초) 저장 완료!")
+                st.rerun()
 
-    # 전체 초기화 버튼
-    if st.sidebar.button("전체 기록 초기화"):
+    # 전체 데이터 초기화
+    if st.sidebar.button("전체 랩 기록 리셋"):
         st.session_state["lap_data"] = pd.DataFrame(columns=["세션명", "랩 번호", "랩타임(초)"])
         st.rerun()
 
-    # 메인 화면 구성
+    # 메인 화면 분석 시각화
     st.markdown(f"### 📌 현재 세션: [{session_name}]")
 
-    # 현재 세션 데이터 필터링
     df = st.session_state["lap_data"]
     session_df = df[df["세션명"] == session_name]
 
     if not session_df.empty:
-        # 주요 지표 표시
         best_lap = session_df["랩타임(초)"].min()
         avg_lap = session_df["랩타임(초)"].mean()
         total_laps = len(session_df)
@@ -105,7 +149,6 @@ if check_password():
 
         st.markdown("---")
 
-        # 시각화 및 데이터 테이블 레이아웃 분할
         chart_col, table_col = st.columns([2, 1])
 
         with chart_col:
@@ -126,17 +169,21 @@ if check_password():
             st.pyplot(fig)
 
         with table_col:
-            st.subheader("📋 기록 데이터")
+            st.subheader("📋 랩 기록 데이터")
             st.dataframe(session_df[["랩 번호", "랩타임(초)"]], hide_index=True, use_container_width=True)
 
-            # CSV 다운로드 버튼
             csv_data = session_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 label="📥 CSV로 내보내기",
                 data=csv_data,
                 file_name=f"lap_times_{session_name}.csv",
-                mime="text/csv",
+                mime="text/css",
                 use_container_width=True
             )
     else:
-        st.info("👈 왼쪽 사이드바에서 랩타임 숫자를 직접 입력하고 엔터나 버튼을 눌러 연속으로 기록하세요!")
+        st.info("👈 사이드바에서 [측정 시작]을 누른 뒤, 차량이 들어올 때마다 [랩 기록하기] 버튼을 누르세요!")
+
+    # 실시간 타이머가 구동 중일 때 화면 자동 새로고침 (초 단위 갱신용)
+    if st.session_state["is_running"]:
+        time.sleep(0.1)
+        st.rerun()
