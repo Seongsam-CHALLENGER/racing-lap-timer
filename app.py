@@ -1,127 +1,142 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import platform
+import io
 
-st.set_page_config(page_title="레이싱 랩타임 분석 시스템", page_icon="🏎️", layout="centered")
+# 페이지 설정
+st.set_page_config(
+    page_title="레이싱 랩타임 기록 및 분석 시스템",
+    page_icon="🏎️",
+    layout="wide"
+)
 
-if platform.system() == 'Windows':
-    plt.rc('font', family='Malgun Gothic')
-elif platform.system() == 'Darwin':
-    plt.rc('font', family='AppleGothic')
-plt.rcParams['axes.unicode_minus'] = False
+# 세션 상태 초기화 (데이터 및 로그인 상태 유지)
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
 
-# --- 간단한 비밀번호 인증 기능 ---
+if "lap_data" not in st.session_state:
+    st.session_state["lap_data"] = pd.DataFrame(columns=["세션명", "랩 번호", "랩타임(초)"])
+
+# 비밀번호 인증 화면 (st.secrets 사용)
 def check_password():
-    """비밀번호를 입력받아 일치할 경우에만 True를 반환합니다."""
     def password_entered():
-        if st.session_state["password"] == "2027":  # 원하는 비밀번호로 변경하세요
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # 비밀번호 세션 삭제
+        # st.secrets에 설정된 비밀번호와 비교
+        if st.session_state["password"] == st.secrets["password"]:
+            st.session_state["logged_in"] = True
+            del st.session_state["password"]  # 비밀번호 상태 제거
         else:
-            st.session_state["password_correct"] = False
+            st.session_state["logged_in"] = False
 
-    if "password_correct" not in st.session_state:
-        # 최초 실행 시 비밀번호 입력창 표시
-        st.text_input("🔒 시스템 접근 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password")
+    if not st.session_state["logged_in"]:
+        st.markdown("## 🔐 시스템 접근 권한 확인")
+        st.text_input(
+            "비밀번호를 입력하세요", 
+            type="password", 
+            key="password", 
+            on_change=password_entered
+        )
         return False
-    elif not st.session_state["password_correct"]:
-        # 비밀번호가 틀렸을 때
-        st.text_input("🔒 시스템 접근 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password")
-        st.error("😕 비밀번호가 틀렸습니다.")
-        return False
+    return True
+
+# 인증 통과 시에만 앱 실행
+if check_password():
+    st.title("🏎️ 레이싱 랩타임 기록 및 분석 시스템")
+    st.markdown("팀원들과 실시간으로 랩타임 기록을 공유하고 분석하세요!")
+
+    # 사이드바 - 데이터 입력 설정
+    st.sidebar.header("⚙️ 데이터 입력 설정")
+    session_name = st.sidebar.text_input("이벤트/세션 명", value="예선전_1차")
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("랩타임 입력 (예: 123 또는 45.67)")
+
+    # 엔터키 입력 지원을 위한 form 활용
+    with st.sidebar.form(key="lap_form", clear_on_submit=True):
+        lap_input = st.text_input("랩타임(초)")
+        submit_button = st.form_submit_button(label="기록 추가하기 (Enter 가능)")
+
+        if submit_button and lap_input:
+            try:
+                lap_time_val = float(lap_input)
+                
+                # 현재 세션의 기존 랩 개수 확인하여 다음 랩 번호 부여
+                current_session_df = st.session_state["lap_data"][
+                    st.session_state["lap_data"]["세션명"] == session_name
+                ]
+                next_lap_no = len(current_session_df) + 1
+
+                # 새로운 데이터 추가
+                new_row = pd.DataFrame({
+                    "세션명": [session_name],
+                    "랩 번호": [next_lap_no],
+                    "랩타임(초)": [lap_time_val]
+                })
+                
+                st.session_state["lap_data"] = pd.concat(
+                    [st.session_state["lap_data"], new_row], 
+                    ignore_index=True
+                )
+                st.sidebar.success(f"{next_lap_no}랩 기록 ({lap_time_val}초) 추가 완료!")
+            except ValueError:
+                st.sidebar.error("⚠️ 올바른 숫자를 입력해주세요 (예: 78.5)")
+
+    # 전체 초기화 버튼
+    if st.sidebar.button("전체 기록 초기화"):
+        st.session_state["lap_data"] = pd.DataFrame(columns=["세션명", "랩 번호", "랩타임(초)"])
+        st.rerun()
+
+    # 메인 화면 구성
+    st.markdown(f"### 📌 현재 세션: [{session_name}]")
+
+    # 현재 세션 데이터 필터링
+    df = st.session_state["lap_data"]
+    session_df = df[df["세션명"] == session_name]
+
+    if not session_df.empty:
+        # 주요 지표 표시
+        best_lap = session_df["랩타임(초)"].min()
+        avg_lap = session_df["랩타임(초)"].mean()
+        total_laps = len(session_df)
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("🏆 베스트 랩타임", f"{best_lap:.2f} 초")
+        col2.metric("📊 평균 랩타임", f"{avg_lap:.2f} 초")
+        col3.metric("🔄 총 주행 랩 수", f"{total_laps} 랩")
+
+        st.markdown("---")
+
+        # 시각화 및 데이터 테이블 레이아웃 분할
+        chart_col, table_col = st.columns([2, 1])
+
+        with chart_col:
+            st.subheader("📈 랩타임 트렌드 그래프")
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.plot(
+                session_df["랩 번호"], 
+                session_df["랩타임(초)"], 
+                marker="o", 
+                linestyle="-", 
+                color="crimson", 
+                linewidth=2
+            )
+            ax.set_title(f"[{session_name}] Lap Times Trend")
+            ax.set_xlabel("Lap Number")
+            ax.set_ylabel("Time (seconds)")
+            ax.grid(True, linestyle="--", alpha=0.6)
+            st.pyplot(fig)
+
+        with table_col:
+            st.subheader("📋 기록 데이터")
+            st.dataframe(session_df[["랩 번호", "랩타임(초)"]], hide_index=True, use_container_width=True)
+
+            # CSV 다운로드 버튼
+            csv_data = session_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 CSV로 내보내기",
+                data=csv_data,
+                file_name=f"lap_times_{session_name}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
     else:
-        # 인증 성공
-        return True
-
-if not check_password():
-    st.stop()  # 비밀번호가 틀리거나 입력되기 전에는 아래 코드를 실행하지 않고 멈춤
-
-
-st.title("🏎️ 레이싱 랩타임 기록 및 분석 시스템")
-st.write("팀원들과 실시간으로 랩타임 기록을 공유하고 분석하세요!")
-
-if "lap_times" not in st.session_state:
-    st.session_state.lap_times = []
-
-st.sidebar.header("⚙️ 데이터 입력 설정")
-event_name = st.sidebar.text_input("이벤트/세션 명", value="예선전_1차")
-
-with st.sidebar.form(key="lap_form", clear_on_submit=True):
-    st.write("**랩타임 입력 (예: 123 또는 45.67)**")
-    lap_input_str = st.text_input("랩타임(초)", value="")
-    submit_btn = st.form_submit_button("기록 추가하기 (Enter 가능)", type="primary")
-
-if submit_btn:
-    try:
-        new_lap = float(lap_input_str.strip())
-        if new_lap > 0:
-            st.session_state.lap_times.append(new_lap)
-            st.sidebar.success(f"{len(st.session_state.lap_times)}랩 기록 추가 완료: {new_lap:.2f}초")
-        else:
-            st.sidebar.warning("0보다 큰 숫자를 입력해주세요.")
-    except ValueError:
-        st.sidebar.error("올바른 숫자 형식으로 입력해주세요 (예: 123 또는 45.67)")
-
-if st.sidebar.button("전체 기록 초기화", type="secondary"):
-    st.session_state.lap_times = []
-    st.rerun()
-
-st.subheader(f"📌 현재 세션: [{event_name}]")
-
-if st.session_state.lap_times:
-    df = pd.DataFrame({
-        "랩 번호": list(range(1, len(st.session_state.lap_times) + 1)),
-        "랩타임(초)": st.session_state.lap_times
-    })
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**[상세 기록 리스트]**")
-        st.dataframe(df, use_container_width=True)
-        
-    with col2:
-        st.write("**[주행 요약 분석]**")
-        fastest = min(st.session_state.lap_times)
-        slowest = max(st.session_state.lap_times)
-        avg = sum(st.session_state.lap_times) / len(st.session_state.lap_times)
-        
-        st.metric(label="총 주행 랩", value=f"{len(st.session_state.lap_times)} 랩")
-        st.metric(label="최고 기록 (최단)", value=f"{fastest:.2f} 초", delta=f"-{(avg-fastest):.2f}s vs Avg")
-        st.metric(label="최저 기록 (최장)", value=f"{slowest:.2f} 초")
-        st.metric(label="평균 랩타임", value=f"{avg:.2f} 초")
-
-    st.subheader("📊 랩타임 추이 그래프")
-    fig, ax = plt.subplots(figsize=(8, 4))
-    laps = list(range(1, len(st.session_state.lap_times) + 1))
-    
-    ax.plot(laps, st.session_state.lap_times, marker='o', color='blue', linestyle='-', linewidth=2)
-    
-    for x, y in zip(laps, st.session_state.lap_times):
-        if y == fastest:
-            color, weight = 'red', 'bold'
-        elif y == slowest:
-            color, weight = 'blue', 'bold'
-        else:
-            color, weight = 'black', 'normal'
-        ax.text(x, y + (max(st.session_state.lap_times) * 0.03), f"{y:.1f}s", 
-                fontsize=9, ha='center', va='bottom', fontweight=weight, color=color)
-
-    ax.set_xticks(laps)
-    ax.set_title(f"Lap Time Trend - {event_name}")
-    ax.set_xlabel("Lap Number")
-    ax.set_ylabel("Time (seconds)")
-    ax.grid(True)
-    
-    st.pyplot(fig)
-
-    csv_data = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button(
-        label="📥 CSV 파일로 다운로드하기",
-        data=csv_data,
-        file_name=f"{event_name}_records.csv",
-        mime="text/csv",
-    )
-else:
-    st.info("👈 왼쪽 사이드바에서 원하는 랩타임 숫자를 직접 입력하고 엔터나 버튼을 눌러 연속으로 기록하세요!")
+        st.info("👈 왼쪽 사이드바에서 랩타임 숫자를 직접 입력하고 엔터나 버튼을 눌러 연속으로 기록하세요!")
