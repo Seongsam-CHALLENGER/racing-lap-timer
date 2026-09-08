@@ -53,7 +53,7 @@ if check_password():
 
     # 사이드바 - 세션 설정 및 스탑워치 컨트롤
     st.sidebar.header("⚙️ 측정 제어판")
-    session_name = st.sidebar.text_input("이벤트/세션 명", value="결승전_1차")
+    session_name = st.sidebar.text_input("이벤트/세션 명", value="Final_Session_1")
 
     st.sidebar.markdown("---")
 
@@ -156,12 +156,13 @@ if check_password():
             fig, ax = plt.subplots(figsize=(8, 4))
             ax.plot(
                 session_df["랩 번호"], 
-                session_df["랩타ime(초)" if "랩타ime(초)" in session_df.columns else "랩타임(초)"], 
+                session_df["랩타임(초)"], 
                 marker="o", 
                 linestyle="-", 
                 color="crimson", 
                 linewidth=2
             )
+            # 그래프 내부 폰트 깨짐 방지를 위해 타이틀과 레이블을 영문으로 고정
             ax.set_title(f"[{session_name}] Lap Times Trend")
             ax.set_xlabel("Lap Number")
             ax.set_ylabel("Time (seconds)")
